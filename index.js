@@ -8,16 +8,20 @@ const secret = "mysecret";
 const dbName = "samudra";
 const express = require("express");
 const rfc6902 = require("rfc6902");
-const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const app = express();
 const jimp = require("jimp");
+const jwt = require("jsonwebtoken");
+const morgan = require("morgan")
+app.use(morgan("dev"))
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 app.use(json());
 app.use(express.static("./static"));
 async function dbConnect() {
   try {
+    // default port : 27017
     const res11 = await mongoose.connect(`mongodb://localhost:27017/${dbName}`);
     return { status: 1 };
   } catch (err) {
@@ -35,7 +39,7 @@ app.use((req, res, next) => {
   res.removeHeader("X-powered-by");
   res.setHeader(
     "Access-Control-Allow-Methods",
-    "GET,HEAD,PUT,PATCH,POST,DELETE"
+    "PATCH,POST"
   );
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Headers", "content-type");
@@ -46,14 +50,35 @@ app.use((req, res, next) => {
     next();
   }
 });
+app.post("/signup", async (req, res) => {
+  try {
+    const user = new User(req.body);
+    const result = await user.save();
+    res.status(201).send({
+      message: "successful",
+    });
+  } catch (err) {
+    res.status(400).send({
+      status: 400,
+      code: err.code,
+      keyPattern: err.keyPattern,
+      keyValue: err.keyValue,
+      name: err.name,
+      properties: err.properties,
+      kind: err.kind,
+      value: err.value,
+    });
+    console.log(err);
+  }
+});
 app.post("/login", async (req, res) => {
   const cookies = req.cookies;
   let flag = true;
   if (authCookie in cookies) {
     try {
-      const uname = jwt.verify(cookies[authCookie], secret);
+      const id = jwt.verify(cookies[authCookie], secret);
       let user = await User.findOne(
-        { username: uname.uname },
+        { _id: id.id },
         {
           username: 1,
           _id: 1,
@@ -78,10 +103,8 @@ app.post("/login", async (req, res) => {
     const uname = req.body.username;
     const pass = req.body.password;
     let user = await User.findOne(
-      { email: email },
+      { username: uname },
       {
-        name: 1,
-        email: 1,
         username: 1,
         password: 1,
         _id: 1,
@@ -91,19 +114,22 @@ app.post("/login", async (req, res) => {
       user = user.toObject();
       const result = await bcrypt.compare(pass, user.password);
       if (result) {
-        res.cookie(authCookie, jwtCookie(uname), {
+        res.cookie(authCookie, jwtCookie(user._id), {
           httpOnly: true,
           maxAge: 1000 * 3 * 24 * 60 * 60,
         });
         delete user.password;
-        res.send(200).send({ user });
+        res.status(200)
+        res.send({ user });
       } else {
-        res.status(400).send({
+        res.status(400)
+        res.send({
           message: "email or password is incorrect ",
         });
       }
     } else {
-      res.status(403).send({
+      res.status(403)
+      res.send({
         message: "invalid email id or password !!",
       });
     }
@@ -115,9 +141,9 @@ app.patch("/patch", async (req, res) => {
   let flag = true;
   if (authCookie in cookies) {
     try {
-      const uname = jwt.verify(cookies[authCookie], secret);
+      const id = jwt.verify(cookies[authCookie], secret);
       let user = await User.findOne(
-        { username: uname.uname },
+        { _id: id.id },
         {
           username: 1,
           _id: 1,
@@ -126,11 +152,13 @@ app.patch("/patch", async (req, res) => {
       if (user) {
         user = user.toObject();
         delete user.password;
-        flag = false;
       } else {
         res.clearCookie(authCookie);
-        flag = true;
+        res.status(400).send({
+          message: "invalid cookie data.Need to relogin",
+        });
       }
+      flag = false;
     } catch (err) {
       flag = true;
     }
@@ -143,7 +171,8 @@ app.patch("/patch", async (req, res) => {
   }
   let doc = req.body.doc;
   rfc6902.applyPatch(doc, req.body.patch);
-  res.status(201).send({ doc });
+  res.status(201)
+  res.send({ doc });
 });
 
 async function resizeImage(file, type) {
@@ -155,9 +184,9 @@ app.post("/thumbnail", async (req, res) => {
   let flag = true;
   if (authCookie in cookies) {
     try {
-      const uname = jwt.verify(cookies[authCookie], secret);
+      const id = jwt.verify(cookies[authCookie], secret);
       let user = await User.findOne(
-        { username: uname.uname },
+        { _id: id.id },
         {
           username: 1,
           _id: 1,
@@ -166,11 +195,13 @@ app.post("/thumbnail", async (req, res) => {
       if (user) {
         user = user.toObject();
         delete user.password;
-        flag = false;
       } else {
         res.clearCookie(authCookie);
-        flag = true;
+        res.status(400).send({
+          message: "invalid cookie data.Need to relogin",
+        });
       }
+      flag = false;
     } catch (err) {
       flag = true;
     }
@@ -183,14 +214,14 @@ app.post("/thumbnail", async (req, res) => {
   }
   const file = fs.createWriteStream(`file.` + req.body.type);
   flag = true;
-  http
+  https
     .get(req.body.url, function (response) {
       response.pipe(file);
       file.on("finish", function () {
         file.close(async () => {
           let res1 = await resizeImage(`file.` + req.body.type, req.body.type);
           res.status(200);
-          res.sendFile(`resize.` + res.body.type);
+          res.sendFile(__dirname+`/resize.` + req.body.type);
         });
       });
       flag = true;
@@ -209,9 +240,9 @@ app.post("/address", async (req, res) => {
   let flag = true;
   if (authCookie in cookies) {
     try {
-      const uname = jwt.verify(cookies[authCookie], secret);
+      const id = jwt.verify(cookies[authCookie], secret);
       var user = await User.findOneAndUpdate(
-        { username: uname.uname },
+        { _id: id.id },
         {
           address: req.body.address,
         },
